@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Self
 from uuid import UUID
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -74,7 +74,14 @@ class Settings(BaseSettings):
     )
     trusted_hosts: list[str] = Field(default_factory=lambda: ["localhost", "127.0.0.1"])
     max_request_bytes: int = Field(default=1_048_576, ge=1024, le=10_485_760)
-    allow_anonymous_learner: bool = True
+    allow_anonymous_learner: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "allow_anonymous_learner",
+            "ALA_ALLOW_ANONYMOUS_LEARNER",
+            "ALA_ALLOW_ANONYMOUS_LEARNERS",
+        ),
+    )
     anonymous_learner_id: UUID = UUID("00000000-0000-4000-8000-000000000001")
 
     chunk_target_tokens: int = Field(default=400, ge=100, le=1000)
