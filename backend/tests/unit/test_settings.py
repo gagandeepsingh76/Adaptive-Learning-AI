@@ -5,7 +5,11 @@ from typing import Any
 import httpx
 import pytest
 
-from app.config.settings import Environment, Settings
+from app.config.settings import (
+    PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX,
+    Environment,
+    Settings,
+)
 from app.main import create_app
 
 
@@ -38,6 +42,19 @@ def test_production_trusts_render_loopbacks_and_frontend_origin_hosts() -> None:
     ]
 
 
+def test_production_trusts_configured_and_default_cors_origins() -> None:
+    settings = production_settings(
+        cors_allowed_origins=["https://adaptive-learning-ai.vercel.app/"]
+    )
+
+    assert settings.cors_allowed_origins == [
+        "https://adaptive-learning-ai.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    assert settings.cors_allowed_origin_regex == PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX
+
+
 async def test_generated_render_hostname_reaches_health_and_docs() -> None:
     app = create_app(
         production_settings(
@@ -56,6 +73,77 @@ async def test_generated_render_hostname_reaches_health_and_docs() -> None:
 
     assert health.status_code == 200
     assert docs.status_code == 200
+
+
+async def test_production_cors_allows_vercel_preview_preflight() -> None:
+    origin = "https://adaptive-learning-ai-git-main-gagandeepsingh76.vercel.app"
+    app = create_app(
+        production_settings(cors_allowed_origins=["https://adaptive-learning-ai.vercel.app"])
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://adaptive-learning-ai-16nq.onrender.com",
+    ) as client:
+        response = await client.options(
+            "/project",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type,X-Learner-ID,X-Request-ID",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+
+async def test_production_cors_allows_localhost_preflight() -> None:
+    app = create_app(
+        production_settings(cors_allowed_origins=["https://adaptive-learning-ai.vercel.app"])
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://adaptive-learning-ai-16nq.onrender.com",
+    ) as client:
+        response = await client.options(
+            "/project",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+
+
+async def test_production_cors_rejects_unconfigured_origin() -> None:
+    app = create_app(
+        production_settings(cors_allowed_origins=["https://adaptive-learning-ai.vercel.app"])
+    )
+    transport = httpx.ASGITransport(app=app)
+
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="https://adaptive-learning-ai-16nq.onrender.com",
+    ) as client:
+        response = await client.options(
+            "/project",
+            headers={
+                "Origin": "https://example.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
 
 
 def test_global_wildcard_trusted_host_remains_forbidden_in_production() -> None:

@@ -14,6 +14,13 @@ from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PRODUCTION_TRUSTED_HOST_DEFAULTS = ("*.onrender.com", "localhost", "127.0.0.1")
+PRODUCTION_CORS_ALLOWED_ORIGIN_DEFAULTS = (
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
+PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX = (
+    r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$"
+)
 
 
 def _hostname_from_origin(origin: str) -> str | None:
@@ -27,6 +34,21 @@ def _hostname_from_origin(origin: str) -> str | None:
     if parsed.hostname is None:
         return None
     return parsed.hostname.lower()
+
+
+def _normalize_cors_origin(origin: str) -> str | None:
+    value = origin.strip().rstrip("/")
+    if not value:
+        return None
+    if value == "*":
+        return value
+
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.netloc and not parsed.path and not parsed.query:
+        host = parsed.hostname.lower() if parsed.hostname is not None else parsed.netloc.lower()
+        port = f":{parsed.port}" if parsed.port is not None else ""
+        return f"{parsed.scheme.lower()}://{host}{port}"
+    return value
 
 
 def _normalize_trusted_host(host: str) -> str | None:
@@ -55,6 +77,17 @@ def _unique_hosts(hosts: Iterable[str | None]) -> list[str]:
         normalized_hosts.append(host)
         seen.add(host)
     return normalized_hosts
+
+
+def _unique_origins(origins: Iterable[str | None]) -> list[str]:
+    normalized_origins: list[str] = []
+    seen: set[str] = set()
+    for origin in origins:
+        if origin is None or origin in seen:
+            continue
+        normalized_origins.append(origin)
+        seen.add(origin)
+    return normalized_origins
 
 
 class Environment(StrEnum):
@@ -142,6 +175,9 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_policy(self) -> Self:
         """Reject configurations that would be unsafe or internally inconsistent."""
+        self.cors_allowed_origins = _unique_origins(
+            _normalize_cors_origin(origin) for origin in self.cors_allowed_origins
+        )
         self.trusted_hosts = _unique_hosts(
             _normalize_trusted_host(host) for host in self.trusted_hosts
         )
@@ -150,6 +186,9 @@ class Settings(BaseSettings):
         if self.chunk_overlap_tokens >= self.chunk_target_tokens:
             raise ValueError("chunk_overlap_tokens must be smaller than chunk_target_tokens")
         if self.environment is Environment.PRODUCTION:
+            self.cors_allowed_origins = _unique_origins(
+                [*self.cors_allowed_origins, *PRODUCTION_CORS_ALLOWED_ORIGIN_DEFAULTS]
+            )
             self.trusted_hosts = _unique_hosts(
                 [
                     *self.trusted_hosts,
@@ -171,6 +210,13 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         """Return whether strict production behavior is required."""
         return self.environment is Environment.PRODUCTION
+
+    @property
+    def cors_allowed_origin_regex(self) -> str | None:
+        """Return the production-only dynamic frontend origin matcher."""
+        if self.environment is Environment.PRODUCTION:
+            return PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX
+        return None
 
     @property
     def chroma_collection_name(self) -> str:
