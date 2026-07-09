@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import UUID, uuid4
 
 import httpx
+import pytest
 
 from app.api.dependencies import ServiceContainer, get_services
 from app.config.settings import Environment, Settings
@@ -139,6 +140,56 @@ async def test_roadmap_endpoint_returns_generated_response() -> None:
     assert body["skills"][0]["tasks"][0]["subtasks"][0]["completion_criteria"]
 
 
+async def test_roadmap_endpoint_logs_unexpected_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            environment=Environment.TEST,
+            database_url="sqlite+aiosqlite:///:memory:",
+            trusted_hosts=["testserver"],
+        )
+    )
+    app.dependency_overrides[get_services] = lambda: ServiceContainer(
+        roadmaps=_FailingRoadmapService(),  # type: ignore[arg-type]
+        projects=None,
+        chat=None,
+        progress=None,  # type: ignore[arg-type]
+        resources=None,  # type: ignore[arg-type]
+    )
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as client,
+    ):
+        response = await client.post(
+            "/roadmap",
+            headers={"X-Request-ID": "roadmap-log-test"},
+            json={
+                "goal_title": "Backend Engineer",
+                "goal_description": "Build production APIs.",
+                "experience_level": "intermediate",
+                "learning_style": "hands_on",
+                "weekly_hours": 8,
+                "existing_skills": ["Python"],
+                "constraints": ["portfolio-ready"],
+            },
+        )
+
+    body = response.json()
+    output = capsys.readouterr().out
+    assert response.status_code == 500
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    assert body["error"]["request_id"] == "roadmap-log-test"
+    assert "traceback" not in response.text.casefold()
+    assert "roadmap.generation.failed" in output
+    assert "roadmap-log-test" in output
+    assert "RuntimeError" in output
+    assert "roadmap boom" in output
+    assert "Traceback (most recent call last)" in output
+
+
 async def test_project_request_enforces_exclusive_modes() -> None:
     app = create_app(
         Settings(
@@ -201,3 +252,11 @@ class _SuccessfulRoadmapService:
                 )
             ],
         )
+
+
+class _FailingRoadmapService:
+    async def create(
+        self, learner_id: UUID, command: RoadmapCreateRequest, request_id: str | None = None
+    ) -> RoadmapResponse:
+        del learner_id, command, request_id
+        raise RuntimeError("roadmap boom")

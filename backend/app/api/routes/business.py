@@ -11,12 +11,14 @@ from app.api.dependencies import (
     get_services,
     require_ai_service,
 )
+from app.config.logging import get_logger
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.progress import ProgressSummaryResponse, ProgressUpdateRequest
 from app.schemas.project import ProjectCreateRequest, ProjectResponse
 from app.schemas.roadmap import RoadmapCreateRequest, RoadmapResponse
 
 router = APIRouter()
+logger = get_logger(__name__)
 Services = Annotated[ServiceContainer, Depends(get_services)]
 LearnerId = Annotated[UUID, Depends(get_learner_id)]
 
@@ -33,8 +35,19 @@ LearnerId = Annotated[UUID, Depends(get_learner_id)]
 async def create_roadmap(
     command: RoadmapCreateRequest, request: Request, services: Services, learner_id: LearnerId
 ) -> RoadmapResponse:
-    roadmaps = require_ai_service(services.roadmaps)
-    return await roadmaps.create(learner_id, command, request.state.request_id)
+    request_id = getattr(request.state, "request_id", "unknown")
+    try:
+        roadmaps = require_ai_service(services.roadmaps)
+        return await roadmaps.create(learner_id, command, request_id)
+    except Exception as exc:
+        logger.exception(
+            "roadmap.generation.failed",
+            request_id=request_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            path=request.url.path,
+        )
+        raise
 
 
 @router.post(
