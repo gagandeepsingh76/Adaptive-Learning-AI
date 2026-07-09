@@ -2,14 +2,59 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Self
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PRODUCTION_TRUSTED_HOST_DEFAULTS = ("*.onrender.com", "localhost", "127.0.0.1")
+
+
+def _hostname_from_origin(origin: str) -> str | None:
+    value = origin.strip()
+    if not value or value == "*":
+        return None
+
+    parsed = urlsplit(value)
+    if parsed.hostname is None and "://" not in value:
+        parsed = urlsplit(f"//{value}")
+    if parsed.hostname is None:
+        return None
+    return parsed.hostname.lower()
+
+
+def _normalize_trusted_host(host: str) -> str | None:
+    value = host.strip().lower()
+    if not value:
+        return None
+    if value == "*" or value.startswith("*."):
+        return value
+
+    parsed = urlsplit(value)
+    if parsed.hostname is not None and "://" in value:
+        return parsed.hostname.lower()
+    if ":" in value or "/" in value:
+        parsed = urlsplit(f"//{value}")
+        if parsed.hostname is not None:
+            return parsed.hostname.lower()
+    return value
+
+
+def _unique_hosts(hosts: Iterable[str | None]) -> list[str]:
+    normalized_hosts: list[str] = []
+    seen: set[str] = set()
+    for host in hosts:
+        if host is None or host in seen:
+            continue
+        normalized_hosts.append(host)
+        seen.add(host)
+    return normalized_hosts
 
 
 class Environment(StrEnum):
@@ -97,11 +142,21 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_policy(self) -> Self:
         """Reject configurations that would be unsafe or internally inconsistent."""
+        self.trusted_hosts = _unique_hosts(
+            _normalize_trusted_host(host) for host in self.trusted_hosts
+        )
         if self.chunk_target_tokens > self.chunk_max_tokens:
             raise ValueError("chunk_target_tokens cannot exceed chunk_max_tokens")
         if self.chunk_overlap_tokens >= self.chunk_target_tokens:
             raise ValueError("chunk_overlap_tokens must be smaller than chunk_target_tokens")
         if self.environment is Environment.PRODUCTION:
+            self.trusted_hosts = _unique_hosts(
+                [
+                    *self.trusted_hosts,
+                    *PRODUCTION_TRUSTED_HOST_DEFAULTS,
+                    *(_hostname_from_origin(origin) for origin in self.cors_allowed_origins),
+                ]
+            )
             if self.gemini_api_key is None:
                 raise ValueError("ALA_GEMINI_API_KEY is required in production")
             if self.allow_anonymous_learner:
