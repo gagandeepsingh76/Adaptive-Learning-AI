@@ -11,8 +11,8 @@ from app.config.ai_settings import AISettings
 @pytest.fixture
 def ai_settings(tmp_path: Path) -> AISettings:
     return AISettings(
-        llm_model="gemini-2.5-flash",
-        embedding_model="gemini-embedding-2",
+        llm_model="openai/gpt-4.1-mini",
+        embedding_model="openai/text-embedding-3-small",
         embedding_dimensions=3,
         generation_timeout_seconds=5,
         embedding_timeout_seconds=5,
@@ -36,4 +36,3 @@ def ai_settings(tmp_path: Path) -> AISettings:
 @pytest.fixture
 def ai_cache(tmp_path: Path) -> SQLiteAICache:
     return SQLiteAICache(tmp_path / "ai-cache.sqlite3")
-

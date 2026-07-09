@@ -1,4 +1,4 @@
-"""Gemini Embedding 2 provider with ordered batch concurrency and caching."""
+"""OpenRouter embedding provider with ordered batch concurrency and caching."""
 
 from __future__ import annotations
 
@@ -7,11 +7,10 @@ import math
 from time import perf_counter
 from typing import Any
 
-from google import genai
-from google.genai import types
+from openai import AsyncOpenAI
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
-from app.ai.gemini import _is_retryable_provider_error
+from app.ai.openrouter import OPENROUTER_BASE_URL, _is_retryable_provider_error
 from app.config.ai_settings import AISettings
 from app.core.interfaces.ai import (
     EmbeddingItem,
@@ -31,12 +30,8 @@ from app.utils.hashing import fingerprint
 from app.utils.time import utc_now
 
 
-class GeminiEmbeddingProvider(EmbeddingProvider):
-    """Text embedding adapter for Gemini Embedding 2.
-
-    Gemini Embedding 2 aggregates multiple contents into one vector, so a logical batch is
-    executed as bounded concurrent single-content calls while preserving input order.
-    """
+class OpenRouterEmbeddingProvider(EmbeddingProvider):
+    """Text embedding adapter for OpenRouter's OpenAI-compatible embeddings API."""
 
     def __init__(
         self,
@@ -45,14 +40,15 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         cache: AICache,
         observability: AIObservabilitySink | None = None,
         client: Any | None = None,
+        base_url: str = OPENROUTER_BASE_URL,
         cache_ttl_seconds: int = 2_592_000,
     ) -> None:
         if not api_key and client is None:
-            raise ValueError("A Gemini API key is required")
+            raise ValueError("An OpenRouter API key is required")
         self._settings = settings
         self._cache = cache
         self._sink = observability or NullAIObservabilitySink()
-        self._client = client or genai.Client(api_key=api_key)
+        self._client = client or AsyncOpenAI(api_key=api_key, base_url=base_url)
         self._cache_ttl_seconds = cache_ttl_seconds
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResult:
@@ -93,7 +89,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             AICallMetric(
                 occurred_at=utc_now(),
                 operation="embedding",
-                provider="gemini",
+                provider="openrouter",
                 model=model,
                 embedding_model=model,
                 latency_ms=latency_ms,
@@ -124,22 +120,20 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
                 retries = attempt.retry_state.attempt_number - 1
                 with attempt:
                     async with asyncio.timeout(self._settings.embedding_timeout_seconds):
-                        response = await self._client.aio.models.embed_content(
+                        response = await self._client.embeddings.create(
                             model=model,
-                            contents=content,
-                            config=types.EmbedContentConfig(
-                                output_dimensionality=dimensions
-                            ),
+                            input=content,
+                            dimensions=dimensions,
                         )
-            embeddings = getattr(response, "embeddings", None) or []
+            embeddings = getattr(response, "data", None) or []
             if len(embeddings) != 1:
-                raise LLMProviderError("Gemini returned an invalid embedding count.")
-            return self._validate_vector(embeddings[0].values, dimensions), retries
+                raise LLMProviderError("OpenRouter returned an invalid embedding count.")
+            return self._validate_vector(embeddings[0].embedding, dimensions), retries
         except LLMProviderError:
             raise
         except Exception as exc:
             raise LLMProviderError(
-                "Gemini embedding failed.", details={"error_type": type(exc).__name__}
+                "OpenRouter embedding failed.", details={"error_type": type(exc).__name__}
             ) from exc
 
     def _instruction(self, purpose: EmbeddingPurpose, text: str) -> str:

@@ -17,7 +17,7 @@ def test_document_factory_preserves_hierarchy_and_chunk_ids_are_stable() -> None
         roadmap_id=uuid4(),
         learner_id=uuid4(),
         content_version=1,
-        embedding_version="gemini-embedding-2:d3",
+        embedding_version="openai/text-embedding-3-small:d3",
         prompt_version="1.0.0",
     )
     chunker = SemanticChunker(100, 150, 20)
@@ -29,4 +29,3 @@ def test_document_factory_preserves_hierarchy_and_chunk_ids_are_stable() -> None
     assert [chunk.id for chunk in first] == [chunk.id for chunk in second]
     assert all(chunk.metadata["roadmap_id"] for chunk in first)
     assert any(chunk.parent_id is not None for chunk in first)
-

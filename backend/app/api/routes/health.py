@@ -71,21 +71,21 @@ def _ai_provider_status(request: Request) -> AIProviderStatus:
         and getattr(services, "chat", None)
     )
 
-    if settings.gemini_api_key is None:
+    if settings.openrouter_api_key is None:
         return AIProviderStatus(
-            provider="gemini",
+            provider="openrouter",
             configured=False,
             status="unconfigured",
             llm_model=settings.llm_model,
             embedding_model=settings.embedding_model,
             embedding_dimensions=settings.embedding_dimensions,
-            reason="Gemini API Key (ALA_GEMINI_API_KEY) is missing.",
+            reason="OpenRouter API key (OPENROUTER_API_KEY) is missing.",
             action="Configure the backend environment, restart the backend, then retry.",
-            missing_env="ALA_GEMINI_API_KEY",
+            missing_env="OPENROUTER_API_KEY",
         )
 
     return AIProviderStatus(
-        provider="gemini",
+        provider="openrouter",
         configured=True,
         status="ready" if provider_ready else "unavailable",
         llm_model=settings.llm_model,
@@ -94,7 +94,7 @@ def _ai_provider_status(request: Request) -> AIProviderStatus:
         reason=(
             None
             if provider_ready
-            else "Gemini credentials are present, but AI services did not initialize."
+            else "OpenRouter credentials are present, but AI services did not initialize."
         ),
         action=None if provider_ready else "Check backend startup logs and restart the service.",
         missing_env=None,

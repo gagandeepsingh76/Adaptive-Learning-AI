@@ -78,11 +78,11 @@ async def test_health_and_unconfigured_provider_error_are_safe() -> None:
     assert unavailable.status_code == 503
     assert unavailable.json()["error"]["code"] == "AI_PROVIDER_UNAVAILABLE"
     assert unavailable.json()["error"]["retryable"] is False
-    assert unavailable.json()["error"]["details"]["missing_env"] == "ALA_GEMINI_API_KEY"
+    assert unavailable.json()["error"]["details"]["missing_env"] == "OPENROUTER_API_KEY"
     assert project_unavailable.status_code == 503
-    assert project_unavailable.json()["error"]["details"]["missing_env"] == "ALA_GEMINI_API_KEY"
+    assert project_unavailable.json()["error"]["details"]["missing_env"] == "OPENROUTER_API_KEY"
     assert chat_unavailable.status_code == 503
-    assert chat_unavailable.json()["error"]["details"]["missing_env"] == "ALA_GEMINI_API_KEY"
+    assert chat_unavailable.json()["error"]["details"]["missing_env"] == "OPENROUTER_API_KEY"
     assert progress.status_code == 404
     assert progress.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert "traceback" not in unavailable.text.casefold()

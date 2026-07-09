@@ -53,10 +53,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             progress=ProgressService(uow),
             resources=LearningResourceService(uow),
         )
-        if resolved_settings.gemini_api_key is not None:
+        if resolved_settings.openrouter_api_key is not None:
             ai_settings = AISettings.from_settings(resolved_settings)
             ai_platform = build_ai_platform(
-                api_key=resolved_settings.gemini_api_key.get_secret_value(),
+                api_key=resolved_settings.openrouter_api_key.get_secret_value(),
                 settings=ai_settings,
                 prompt_root=resolved_settings.prompt_root,
                 chroma_path=resolved_settings.chroma_path,
@@ -90,8 +90,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             logger.warning(
                 "ai.provider.unconfigured",
-                provider="gemini",
-                missing_env="ALA_GEMINI_API_KEY",
+                provider="openrouter",
+                missing_env="OPENROUTER_API_KEY",
             )
         logger.info(
             "application.started",

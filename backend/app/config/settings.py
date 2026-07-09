@@ -121,9 +121,24 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/learning_assistant.db"
     database_echo: bool = False
 
-    gemini_api_key: SecretStr | None = None
-    llm_model: str = "gemini-2.5-flash"
-    embedding_model: str = "gemini-embedding-2"
+    openrouter_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "openrouter_api_key",
+            "OPENROUTER_API_KEY",
+            "ALA_OPENROUTER_API_KEY",
+        ),
+    )
+    llm_model: str = Field(
+        default="openai/gpt-4.1-mini",
+        validation_alias=AliasChoices(
+            "llm_model",
+            "OPENROUTER_MODEL",
+            "ALA_OPENROUTER_MODEL",
+            "ALA_LLM_MODEL",
+        ),
+    )
+    embedding_model: str = "openai/text-embedding-3-small"
     embedding_dimensions: int = Field(default=768, ge=128, le=3072)
     llm_timeout_seconds: float = Field(default=45.0, gt=0, le=180)
     embedding_timeout_seconds: float = Field(default=30.0, gt=0, le=180)
@@ -196,8 +211,8 @@ class Settings(BaseSettings):
                     *(_hostname_from_origin(origin) for origin in self.cors_allowed_origins),
                 ]
             )
-            if self.gemini_api_key is None:
-                raise ValueError("ALA_GEMINI_API_KEY is required in production")
+            if self.openrouter_api_key is None:
+                raise ValueError("OPENROUTER_API_KEY is required in production")
             if self.allow_anonymous_learner:
                 raise ValueError("anonymous learners must be disabled in production")
             if "*" in self.cors_allowed_origins or "*" in self.trusted_hosts:

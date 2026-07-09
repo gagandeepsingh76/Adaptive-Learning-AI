@@ -15,7 +15,7 @@ _SENSITIVE_KEYS = frozenset(
     {
         "authorization",
         "cookie",
-        "gemini_api_key",
+        "openrouter_api_key",
         "api_key",
         "prompt",
         "question",

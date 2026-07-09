@@ -129,7 +129,7 @@ class EvaluationResult:
 
 
 class LLMProvider(ABC):
-    """Generation port replaceable by Gemini, OpenAI, Claude, or local models."""
+    """Generation port replaceable by cloud or local model providers."""
 
     @abstractmethod
     async def generate(self, request: GenerationRequest) -> GenerationResult:

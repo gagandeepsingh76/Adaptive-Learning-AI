@@ -24,18 +24,18 @@ class ServiceContainer:
 
 
 def ai_provider_not_configured_error() -> LLMProviderConfigurationError:
-    """Return a client-safe diagnostic for AI endpoints when Gemini is not configured."""
+    """Return a client-safe diagnostic for AI endpoints when OpenRouter is not configured."""
     return LLMProviderConfigurationError(
-        "Gemini API Key (ALA_GEMINI_API_KEY) is missing.",
+        "OpenRouter API key (OPENROUTER_API_KEY) is missing.",
         details={
             "title": "AI Service Not Configured",
-            "provider": "gemini",
-            "missing_env": "ALA_GEMINI_API_KEY",
-            "reason": "Gemini API Key (ALA_GEMINI_API_KEY) is missing.",
+            "provider": "openrouter",
+            "missing_env": "OPENROUTER_API_KEY",
+            "reason": "OpenRouter API key (OPENROUTER_API_KEY) is missing.",
             "action": "Configure the backend environment, restart the backend, then retry.",
             "setup_steps": [
-                "Add ALA_GEMINI_API_KEY to the backend environment.",
-                "Restart the FastAPI backend so services are composed with Gemini.",
+                "Add OPENROUTER_API_KEY to the backend environment.",
+                "Restart the FastAPI backend so services are composed with OpenRouter.",
                 "Run the health check again and retry the generation request.",
             ],
         },

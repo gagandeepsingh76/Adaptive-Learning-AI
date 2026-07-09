@@ -6,10 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.ai.cache import SQLiteAICache
-from app.ai.embeddings import GeminiEmbeddingProvider
+from app.ai.embeddings import OpenRouterEmbeddingProvider
 from app.ai.evaluation import GenerationEvaluator
-from app.ai.gemini import GeminiProvider
 from app.ai.observability import JsonlAIObservabilitySink
+from app.ai.openrouter import OpenRouterProvider
 from app.ai.repair import PromptRepairEngine
 from app.ai.structured import StructuredGenerationEngine
 from app.config.ai_settings import AISettings
@@ -27,7 +27,7 @@ class AIPlatform:
 
     generator: StructuredGenerationEngine
     prompts: PromptManager
-    embeddings: GeminiEmbeddingProvider
+    embeddings: OpenRouterEmbeddingProvider
     indexer: RAGIndexer
     retriever: Retriever
     context_builder: ContextBuilder
@@ -62,8 +62,8 @@ def build_ai_platform(
     cache = SQLiteAICache(settings.cache_path)
     observability = JsonlAIObservabilitySink(settings.metrics_path)
     prompts = PromptManager(prompt_root, cache)
-    llm = GeminiProvider(api_key, settings, observability)
-    embeddings = GeminiEmbeddingProvider(api_key, settings, cache, observability)
+    llm = OpenRouterProvider(api_key, settings, observability)
+    embeddings = OpenRouterEmbeddingProvider(api_key, settings, cache, observability)
     evaluator = GenerationEvaluator(
         settings.quality_threshold,
         cache,

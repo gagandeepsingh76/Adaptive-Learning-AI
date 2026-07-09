@@ -1,4 +1,4 @@
-"""Gemini implementation of the provider-neutral LLM contract."""
+"""OpenRouter implementation of the provider-neutral LLM contract."""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ from importlib.metadata import PackageNotFoundError, version
 from time import perf_counter
 from typing import Any
 
-from google import genai
-from google.genai import types
-from google.genai.errors import ClientError
+from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
 from app.config.ai_settings import AISettings
@@ -32,28 +30,12 @@ from app.exceptions import LLMProviderClientError, LLMProviderError
 from app.utils.time import utc_now
 
 logger = get_logger(__name__)
-_GEMINI_SCHEMA_OMITTED_KEYS = frozenset(
-    {
-        "additionalProperties",
-        "default",
-        "description",
-        "examples",
-        "exclusiveMaximum",
-        "exclusiveMinimum",
-        "maxItems",
-        "maxLength",
-        "maximum",
-        "minItems",
-        "minLength",
-        "minimum",
-        "pattern",
-        "title",
-    }
-)
+
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
-class GeminiProvider(LLMProvider):
-    """Configurable Gemini generation adapter with bounded retries and telemetry."""
+class OpenRouterProvider(LLMProvider):
+    """OpenRouter chat-completions adapter with bounded retries and telemetry."""
 
     def __init__(
         self,
@@ -61,13 +43,14 @@ class GeminiProvider(LLMProvider):
         settings: AISettings,
         observability: AIObservabilitySink | None = None,
         client: Any | None = None,
+        base_url: str = OPENROUTER_BASE_URL,
     ) -> None:
         if not api_key and client is None:
-            raise ValueError("A Gemini API key is required")
+            raise ValueError("An OpenRouter API key is required")
         self._settings = settings
         self._sink = observability or NullAIObservabilitySink()
-        self._client = client or genai.Client(api_key=api_key)
-        self._transport_diagnostics = _api_key_transport_diagnostics(self._client, api_key)
+        self._client = client or AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self._transport_diagnostics = _api_key_transport_diagnostics(api_key, base_url)
 
     async def generate(self, request: GenerationRequest) -> GenerationResult:
         """Generate a complete response and normalize provider accounting."""
@@ -79,10 +62,8 @@ class GeminiProvider(LLMProvider):
                 retry_count = attempt.retry_state.attempt_number - 1
                 with attempt:
                     async with asyncio.timeout(self._settings.generation_timeout_seconds):
-                        response = await self._client.aio.models.generate_content(
-                            model=model,
-                            contents=request.prompt,
-                            config=self._generation_config(request),
+                        response = await self._client.chat.completions.create(
+                            **self._chat_completion_params(request, model)
                         )
             result = self._to_result(response, model, started, retry_count)
             await self._record(request, result, "success", None)
@@ -92,12 +73,12 @@ class GeminiProvider(LLMProvider):
             await self._record_failure(request, model, latency_ms, retry_count, exc)
             if isinstance(exc, LLMProviderError):
                 raise
-            if isinstance(exc, ClientError):
+            if isinstance(exc, APIStatusError):
                 raise _provider_client_error(
                     exc, model=model, transport_diagnostics=self._transport_diagnostics
                 ) from exc
             raise LLMProviderError(
-                "Gemini generation failed.", details={"error_type": type(exc).__name__}
+                "OpenRouter generation failed.", details={"error_type": type(exc).__name__}
             ) from exc
 
     async def stream(self, request: GenerationRequest) -> AsyncIterator[GenerationChunk]:
@@ -107,19 +88,16 @@ class GeminiProvider(LLMProvider):
         usage = TokenUsage()
         try:
             async with asyncio.timeout(self._settings.generation_timeout_seconds):
-                stream = await self._client.aio.models.generate_content_stream(
-                    model=model,
-                    contents=request.prompt,
-                    config=self._generation_config(request),
+                stream = await self._client.chat.completions.create(
+                    **self._chat_completion_params(request, model),
+                    stream=True,
                 )
-                async for response in stream:
-                    text = self._extract_text(response, allow_empty=True)
-                    usage = self._usage(response) or usage
-                    finish_reason = self._finish_reason(response)
+                async for chunk in stream:
+                    text = self._extract_stream_text(chunk)
+                    usage = self._usage(chunk) or usage
+                    finish_reason = self._finish_reason(chunk)
                     if text or finish_reason:
-                        yield GenerationChunk(
-                            text=text, finish_reason=finish_reason, usage=usage
-                        )
+                        yield GenerationChunk(text=text, finish_reason=finish_reason, usage=usage)
             result = GenerationResult(
                 text="",
                 model=model,
@@ -134,43 +112,30 @@ class GeminiProvider(LLMProvider):
             )
             if isinstance(exc, LLMProviderError):
                 raise
-            if isinstance(exc, ClientError):
+            if isinstance(exc, APIStatusError):
                 raise _provider_client_error(
                     exc, model=model, transport_diagnostics=self._transport_diagnostics
                 ) from exc
             raise LLMProviderError(
-                "Gemini streaming generation failed.",
+                "OpenRouter streaming generation failed.",
                 details={"error_type": type(exc).__name__},
             ) from exc
 
-    def _generation_config(self, request: GenerationRequest) -> types.GenerateContentConfig:
-        threshold = types.HarmBlockThreshold(self._settings.safety_threshold)
-        response_schema = _gemini_response_json_schema(request.response_schema)
-        categories = (
-            types.HarmCategory.HARM_CATEGORY_HARASSMENT,
-            types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-        )
-        return types.GenerateContentConfig(
-            system_instruction=_system_instruction_with_schema(
-                request.system_instruction, response_schema
-            ),
-            temperature=request.temperature
+    def _chat_completion_params(self, request: GenerationRequest, model: str) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "model": model,
+            "messages": _messages(request),
+            "temperature": request.temperature
             if request.temperature is not None
             else self._settings.temperature,
-            top_p=request.top_p if request.top_p is not None else self._settings.top_p,
-            top_k=request.top_k if request.top_k is not None else self._settings.top_k,
-            max_output_tokens=request.max_output_tokens
+            "top_p": request.top_p if request.top_p is not None else self._settings.top_p,
+            "max_tokens": request.max_output_tokens
             if request.max_output_tokens is not None
             else self._settings.max_output_tokens,
-            response_mime_type="application/json" if request.response_schema else "text/plain",
-            response_json_schema=None,
-            safety_settings=[
-                types.SafetySetting(category=category, threshold=threshold)
-                for category in categories
-            ],
-        )
+        }
+        if request.response_schema:
+            params["response_format"] = {"type": "json_object"}
+        return params
 
     def _to_result(
         self, response: Any, model: str, started: float, retry_count: int
@@ -187,32 +152,41 @@ class GeminiProvider(LLMProvider):
 
     @staticmethod
     def _extract_text(response: Any, *, allow_empty: bool = False) -> str:
-        try:
-            value = response.text
-        except (AttributeError, ValueError) as exc:
-            raise LLMProviderError("Gemini blocked or omitted response content.") from exc
-        if not value and not allow_empty:
-            raise LLMProviderError("Gemini returned an empty response.")
-        return value or ""
+        choices = getattr(response, "choices", None) or []
+        if not choices:
+            raise LLMProviderError("OpenRouter returned no response choices.")
+        message = getattr(choices[0], "message", None)
+        text = _content_to_text(getattr(message, "content", None))
+        if not text and not allow_empty:
+            raise LLMProviderError("OpenRouter returned an empty response.")
+        return text
+
+    @staticmethod
+    def _extract_stream_text(chunk: Any) -> str:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            return ""
+        delta = getattr(choices[0], "delta", None)
+        return _content_to_text(getattr(delta, "content", None))
 
     @staticmethod
     def _usage(response: Any) -> TokenUsage:
-        usage = getattr(response, "usage_metadata", None)
+        usage = getattr(response, "usage", None)
         if usage is None:
             return TokenUsage()
         return TokenUsage(
-            input_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
-            output_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
-            total_tokens=int(getattr(usage, "total_token_count", 0) or 0),
+            input_tokens=int(getattr(usage, "prompt_tokens", 0) or 0),
+            output_tokens=int(getattr(usage, "completion_tokens", 0) or 0),
+            total_tokens=int(getattr(usage, "total_tokens", 0) or 0),
         )
 
     @staticmethod
     def _finish_reason(response: Any) -> str | None:
-        candidates = getattr(response, "candidates", None) or []
-        if not candidates:
+        choices = getattr(response, "choices", None) or []
+        if not choices:
             return None
-        reason = getattr(candidates[0], "finish_reason", None)
-        return str(getattr(reason, "value", reason)) if reason is not None else None
+        reason = getattr(choices[0], "finish_reason", None)
+        return str(reason) if reason is not None else None
 
     def _retrying(self) -> AsyncRetrying:
         return AsyncRetrying(
@@ -237,7 +211,7 @@ class GeminiProvider(LLMProvider):
             AICallMetric(
                 occurred_at=utc_now(),
                 operation="generation",
-                provider="gemini",
+                provider="openrouter",
                 model=result.model,
                 latency_ms=result.latency_ms,
                 request_id=request.request_id,
@@ -266,43 +240,36 @@ class GeminiProvider(LLMProvider):
             "retry_count": retry_count,
             "error_type": type(exc).__name__,
         }
-        if isinstance(exc, ClientError):
+        if isinstance(exc, APIStatusError):
             diagnostic = _client_error_diagnostic(
                 exc, model=model, transport_diagnostics=self._transport_diagnostics
             )
             log_fields.update(
                 {
                     "http_status": diagnostic["http_status"],
-                    "gemini_error_code": diagnostic["gemini_error_code"],
-                    "gemini_error_message": diagnostic["gemini_error_message"],
+                    "openrouter_error_code": diagnostic["openrouter_error_code"],
+                    "openrouter_error_message": diagnostic["openrouter_error_message"],
                     "response_body": diagnostic["response_body"],
-                    "api_key_sent": diagnostic["api_key_sent"],
                     "sdk_version": diagnostic["sdk_version"],
-                    "gemini_client_error": diagnostic,
+                    "openrouter_client_error": diagnostic,
                 }
             )
-        logger.warning(
-            "ai.generation.failed",
-            **log_fields,
-        )
+        logger.warning("ai.generation.failed", **log_fields)
         result = GenerationResult(
             text="", model=model, usage=TokenUsage(), latency_ms=latency_ms, retry_count=retry_count
         )
         await self._record(request, result, "failure", _metric_error_code(exc))
 
 
-def _is_retryable_provider_error(exc: BaseException) -> bool:
-    if isinstance(exc, (TimeoutError, ConnectionError, asyncio.TimeoutError)):
-        return True
-    status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-    return status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
-
-
-def _gemini_response_json_schema(schema: Mapping[str, Any] | None) -> dict[str, Any] | None:
-    if schema is None:
-        return None
-    simplified = _simplify_gemini_schema(schema)
-    return simplified if isinstance(simplified, dict) else None
+def _messages(request: GenerationRequest) -> list[dict[str, str]]:
+    system_instruction = _system_instruction_with_schema(
+        request.system_instruction, request.response_schema
+    )
+    messages: list[dict[str, str]] = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": request.prompt})
+    return messages
 
 
 def _system_instruction_with_schema(
@@ -312,7 +279,7 @@ def _system_instruction_with_schema(
         return system_instruction
     schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
     schema_instruction = (
-        "Return only one valid JSON object matching this response schema shape. "
+        "Return only one valid JSON object matching this response schema. "
         "Do not include markdown fences, prose, or undeclared top-level fields. "
         "The backend will enforce the full strict schema after generation.\n"
         f"<response_schema>{schema_text}</response_schema>"
@@ -322,46 +289,53 @@ def _system_instruction_with_schema(
     return schema_instruction
 
 
-def _simplify_gemini_schema(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        simplified: dict[str, Any] = {}
-        for key, item in value.items():
-            string_key = str(key)
-            if string_key in _GEMINI_SCHEMA_OMITTED_KEYS:
-                continue
-            simplified[string_key] = _simplify_gemini_schema(item)
-        return simplified
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [_simplify_gemini_schema(item) for item in value]
-    return value
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, Mapping):
+        text = content.get("text") or content.get("content")
+        return str(text) if text is not None else ""
+    if isinstance(content, Sequence) and not isinstance(content, str | bytes | bytearray):
+        parts = [_content_to_text(item) for item in content]
+        return "".join(part for part in parts if part)
+    return ""
 
 
-def _google_genai_version() -> str:
+def _is_retryable_provider_error(exc: BaseException) -> bool:
+    if isinstance(
+        exc,
+        (
+            TimeoutError,
+            ConnectionError,
+            asyncio.TimeoutError,
+            APIConnectionError,
+            APITimeoutError,
+        ),
+    ):
+        return True
+    status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    return status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
+
+
+def _openai_version() -> str:
     try:
-        return version("google-genai")
+        return version("openai")
     except PackageNotFoundError:
         return "unknown"
 
 
-GOOGLE_GENAI_VERSION = _google_genai_version()
+OPENAI_SDK_VERSION = _openai_version()
 
 
-def _api_key_transport_diagnostics(client: Any, api_key: str) -> dict[str, Any]:
-    api_client = getattr(client, "_api_client", None)
-    api_client_key = getattr(api_client, "api_key", None)
-    http_options = getattr(api_client, "_http_options", None)
-    headers = getattr(http_options, "headers", None)
-    api_key_header = headers.get("x-goog-api-key") if isinstance(headers, Mapping) else None
+def _api_key_transport_diagnostics(api_key: str, base_url: str) -> dict[str, Any]:
     return {
         "api_key_configured": bool(api_key),
-        "api_key_client_present": bool(api_client_key),
-        "api_key_header_present": bool(api_key_header),
-        "api_key_sent": bool(api_key_header),
+        "base_url": base_url,
     }
 
 
 def _provider_client_error(
-    exc: ClientError, *, model: str, transport_diagnostics: Mapping[str, Any]
+    exc: APIStatusError, *, model: str, transport_diagnostics: Mapping[str, Any]
 ) -> LLMProviderClientError:
     diagnostic = _client_error_diagnostic(
         exc, model=model, transport_diagnostics=transport_diagnostics
@@ -373,69 +347,65 @@ def _provider_client_error(
         message,
         details=diagnostic,
         status_code=status_code,
-        app_code=_application_error_code(diagnostic["gemini_error_code"]),
+        app_code=_application_error_code(diagnostic["openrouter_error_code"]),
         retryable=_is_retryable_provider_error(exc),
     )
 
 
 def _client_error_message(diagnostic: Mapping[str, Any]) -> str:
-    message = diagnostic.get("gemini_error_message")
+    message = diagnostic.get("openrouter_error_message")
     if isinstance(message, str) and message:
-        return f"Gemini request rejected: {message}"
-    return "Gemini request rejected by the provider."
+        return f"OpenRouter request rejected: {message}"
+    return "OpenRouter request rejected by the provider."
 
 
 def _client_error_diagnostic(
-    exc: ClientError, *, model: str, transport_diagnostics: Mapping[str, Any]
+    exc: APIStatusError, *, model: str, transport_diagnostics: Mapping[str, Any]
 ) -> dict[str, Any]:
     http_status = _http_status(exc)
-    gemini_error_code = _gemini_error_code(exc)
-    gemini_error_message = _gemini_error_message(exc)
+    response_body = _response_body(exc)
+    response_json = _response_json(response_body)
+    openrouter_error_code = _openrouter_error_code(exc, response_json)
+    openrouter_error_message = _openrouter_error_message(exc, response_json)
     return {
-        "provider": "gemini",
+        "provider": "openrouter",
         "model": model,
-        "sdk": "google-genai",
-        "sdk_version": GOOGLE_GENAI_VERSION,
+        "sdk": "openai",
+        "sdk_version": OPENAI_SDK_VERSION,
         "error_type": type(exc).__name__,
         "exception": str(exc),
         "http_status": http_status,
-        "gemini_error_code": gemini_error_code,
-        "gemini_error_message": gemini_error_message,
-        "response_body": _response_body(exc),
-        "response_json": _json_safe(getattr(exc, "details", None)),
-        "diagnostic_hint": _diagnostic_hint(http_status, gemini_error_code),
+        "openrouter_error_code": openrouter_error_code,
+        "openrouter_error_message": openrouter_error_message,
+        "response_body": response_body,
+        "response_json": response_json,
+        "diagnostic_hint": _diagnostic_hint(http_status, openrouter_error_code),
         **transport_diagnostics,
     }
 
 
-def _http_status(exc: ClientError) -> int | None:
-    code = getattr(exc, "code", None)
-    if isinstance(code, int):
-        return code
-    payload = _error_payload(getattr(exc, "details", None))
-    payload_code = payload.get("code")
-    return payload_code if isinstance(payload_code, int) else None
+def _http_status(exc: APIStatusError) -> int | None:
+    status_code = getattr(exc, "status_code", None)
+    return status_code if isinstance(status_code, int) else None
 
 
-def _gemini_error_code(exc: ClientError) -> str | None:
-    status = getattr(exc, "status", None)
-    if status:
-        return str(status)
-    payload = _error_payload(getattr(exc, "details", None))
-    payload_status = payload.get("status")
-    if payload_status:
-        return str(payload_status)
-    payload_code = payload.get("code")
-    return str(payload_code) if payload_code is not None else None
+def _openrouter_error_code(exc: APIStatusError, response_json: Any) -> str | None:
+    payload = _error_payload(response_json)
+    for key in ("code", "status", "type"):
+        value = payload.get(key)
+        if value is not None:
+            return str(value)
+    status_code = _http_status(exc)
+    return str(status_code) if status_code is not None else None
 
 
-def _gemini_error_message(exc: ClientError) -> str | None:
-    message = getattr(exc, "message", None)
-    if message:
+def _openrouter_error_message(exc: APIStatusError, response_json: Any) -> str | None:
+    payload = _error_payload(response_json)
+    message = payload.get("message")
+    if message is not None:
         return str(message)
-    payload = _error_payload(getattr(exc, "details", None))
-    payload_message = payload.get("message")
-    return str(payload_message) if payload_message is not None else None
+    exception_message = getattr(exc, "message", None)
+    return str(exception_message) if exception_message else None
 
 
 def _error_payload(details: Any) -> Mapping[str, Any]:
@@ -447,16 +417,24 @@ def _error_payload(details: Any) -> Mapping[str, Any]:
     return details
 
 
-def _response_body(exc: ClientError) -> Any:
+def _response_body(exc: APIStatusError) -> Any:
+    body = getattr(exc, "body", None)
+    if body is not None:
+        return _json_safe(body)
     response = getattr(exc, "response", None)
-    for attr in ("text", "body"):
-        value = getattr(response, attr, None)
-        if value is not None:
-            return _json_safe(value)
-    body_segments = getattr(response, "body_segments", None)
-    if body_segments is not None:
-        return _json_safe(body_segments)
-    return _json_safe(getattr(exc, "details", None))
+    text = getattr(response, "text", None)
+    if text is not None:
+        return _json_safe(text)
+    return None
+
+
+def _response_json(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return _json_safe(json.loads(value))
+        except json.JSONDecodeError:
+            return None
+    return _json_safe(value)
 
 
 def _json_safe(value: Any) -> Any:
@@ -471,38 +449,33 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
-def _application_error_code(gemini_error_code: Any) -> str:
-    raw = str(gemini_error_code or "CLIENT_ERROR").upper()
+def _application_error_code(openrouter_error_code: Any) -> str:
+    raw = str(openrouter_error_code or "CLIENT_ERROR").upper()
     normalized = "".join(character if character.isalnum() else "_" for character in raw)
     normalized = "_".join(part for part in normalized.split("_") if part)
     if not normalized:
         normalized = "CLIENT_ERROR"
     if normalized.isdigit():
         normalized = f"HTTP_{normalized}"
-    return f"GEMINI_{normalized}"
+    return f"OPENROUTER_{normalized}"
 
 
 def _metric_error_code(exc: Exception) -> str:
-    if isinstance(exc, ClientError):
-        return _application_error_code(_gemini_error_code(exc))
+    if isinstance(exc, APIStatusError):
+        response_json = _response_json(_response_body(exc))
+        return _application_error_code(_openrouter_error_code(exc, response_json))
     return type(exc).__name__
 
 
-def _diagnostic_hint(http_status: int | None, gemini_error_code: str | None) -> str:
-    if http_status == 400 and gemini_error_code == "FAILED_PRECONDITION":
-        return (
-            "Check Gemini API billing and whether the request is running from a "
-            "free-tier-supported region."
-        )
+def _diagnostic_hint(http_status: int | None, openrouter_error_code: str | None) -> str:
     if http_status == 400:
-        return "Check the Gemini request shape, API version, and model-specific parameters."
+        return "Check the OpenRouter request shape, API version, and model parameters."
     if http_status in {401, 403}:
-        return (
-            "Check API key validity, key restrictions, Gemini API enablement, and model "
-            "permissions."
-        )
+        return "Check the OpenRouter API key, account credits, and model permissions."
     if http_status == 404:
-        return "Check the Gemini model name, API version, and requested resource access."
+        return "Check the OpenRouter model name and requested resource access."
     if http_status == 429:
-        return "Check Gemini quota, rate limits, spend limits, and billing tier."
-    return "Check the Gemini provider response body for the authoritative reason."
+        return "Check OpenRouter quota, rate limits, spend limits, and billing settings."
+    if openrouter_error_code:
+        return "Check the OpenRouter provider response body for the authoritative reason."
+    return "Check OpenRouter status and provider logs for the authoritative reason."

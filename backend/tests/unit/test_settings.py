@@ -17,7 +17,7 @@ def production_settings(**overrides: Any) -> Settings:
     return Settings(
         _env_file=None,
         environment=Environment.PRODUCTION,
-        gemini_api_key="test-gemini-key",
+        openrouter_api_key="test-openrouter-key",
         allow_anonymous_learner=False,
         **overrides,
     )
@@ -53,6 +53,17 @@ def test_production_trusts_configured_and_default_cors_origins() -> None:
         "http://127.0.0.1:3000",
     ]
     assert settings.cors_allowed_origin_regex == PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX
+
+
+def test_openrouter_environment_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/test-model")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.openrouter_api_key is not None
+    assert settings.openrouter_api_key.get_secret_value() == "test-openrouter-key"
+    assert settings.llm_model == "openai/test-model"
 
 
 async def test_generated_render_hostname_reaches_health_and_docs() -> None:

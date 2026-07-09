@@ -26,12 +26,12 @@ services:
         value: INFO
       - key: ALA_DATABASE_URL
         value: sqlite+aiosqlite:////opt/render/project/src/backend/data/learning_assistant.db
-      - key: ALA_GEMINI_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
-      - key: ALA_LLM_MODEL
-        value: gemini-2.5-flash
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4.1-mini
       - key: ALA_EMBEDDING_MODEL
-        value: gemini-embedding-2
+        value: openai/text-embedding-3-small
       - key: ALA_EMBEDDING_DIMENSIONS
         value: "768"
       - key: ALA_AI_METRICS_PATH
