@@ -1,5 +1,7 @@
 """Gemini generation adapter tests without network access."""
 
+import json
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,6 +11,7 @@ from google.genai.errors import ClientError
 from app.ai.gemini import GeminiProvider
 from app.core.interfaces.ai import GenerationRequest
 from app.exceptions import LLMProviderClientError
+from app.schemas.ai_outputs import GeneratedRoadmap
 
 
 class FakeModels:
@@ -42,6 +45,39 @@ async def test_gemini_provider_normalizes_usage_and_json_config(ai_settings: Any
     config = models.config
     assert config is not None
     assert config.response_mime_type == "application/json"
+
+
+async def test_gemini_provider_simplifies_large_response_schema(ai_settings: Any) -> None:
+    models = FakeModels()
+    client = SimpleNamespace(aio=SimpleNamespace(models=models))
+    provider = GeminiProvider("", ai_settings, client=client)
+
+    await provider.generate(
+        GenerationRequest(prompt="prompt", response_schema=GeneratedRoadmap.model_json_schema())
+    )
+
+    config = models.config
+    assert config is not None
+    schema = config.response_json_schema
+    assert isinstance(schema, dict)
+    assert schema["properties"]["skills"]["items"]["$ref"] == "#/$defs/GeneratedSkill"
+    encoded = json.dumps(schema)
+    assert "GeneratedSubtask" in encoded
+    assert not _schema_contains_any(
+        schema,
+        {
+            "additionalProperties",
+            "exclusiveMaximum",
+            "exclusiveMinimum",
+            "maxItems",
+            "maxLength",
+            "maximum",
+            "minItems",
+            "minLength",
+            "minimum",
+            "title",
+        },
+    )
 
 
 class FailingModels:
@@ -116,3 +152,11 @@ def test_gemini_provider_configures_sdk_api_key_header(ai_settings: Any) -> None
     assert provider._transport_diagnostics["api_key_client_present"] is True
     assert provider._transport_diagnostics["api_key_header_present"] is True
     assert provider._transport_diagnostics["api_key_sent"] is True
+
+
+def _schema_contains_any(value: Any, keys: set[str]) -> bool:
+    if isinstance(value, Mapping):
+        return any(key in keys or _schema_contains_any(item, keys) for key, item in value.items())
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return any(_schema_contains_any(item, keys) for item in value)
+    return False

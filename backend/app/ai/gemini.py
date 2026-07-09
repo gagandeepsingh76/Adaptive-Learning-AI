@@ -31,6 +31,24 @@ from app.exceptions import LLMProviderClientError, LLMProviderError
 from app.utils.time import utc_now
 
 logger = get_logger(__name__)
+_GEMINI_SCHEMA_OMITTED_KEYS = frozenset(
+    {
+        "additionalProperties",
+        "default",
+        "description",
+        "examples",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "maxItems",
+        "maxLength",
+        "maximum",
+        "minItems",
+        "minLength",
+        "minimum",
+        "pattern",
+        "title",
+    }
+)
 
 
 class GeminiProvider(LLMProvider):
@@ -143,7 +161,7 @@ class GeminiProvider(LLMProvider):
             if request.max_output_tokens is not None
             else self._settings.max_output_tokens,
             response_mime_type="application/json" if request.response_schema else "text/plain",
-            response_json_schema=dict(request.response_schema) if request.response_schema else None,
+            response_json_schema=_gemini_response_json_schema(request.response_schema),
             safety_settings=[
                 types.SafetySetting(category=category, threshold=threshold)
                 for category in categories
@@ -274,6 +292,27 @@ def _is_retryable_provider_error(exc: BaseException) -> bool:
         return True
     status_code = getattr(exc, "status_code", None) or getattr(exc, "code", None)
     return status_code == 429 or (isinstance(status_code, int) and status_code >= 500)
+
+
+def _gemini_response_json_schema(schema: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if schema is None:
+        return None
+    simplified = _simplify_gemini_schema(schema)
+    return simplified if isinstance(simplified, dict) else None
+
+
+def _simplify_gemini_schema(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        simplified: dict[str, Any] = {}
+        for key, item in value.items():
+            string_key = str(key)
+            if string_key in _GEMINI_SCHEMA_OMITTED_KEYS:
+                continue
+            simplified[string_key] = _simplify_gemini_schema(item)
+        return simplified
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return [_simplify_gemini_schema(item) for item in value]
+    return value
 
 
 def _google_genai_version() -> str:
