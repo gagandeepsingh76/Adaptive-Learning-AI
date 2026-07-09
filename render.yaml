@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: adaptive-learning-ai-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /health/ready
+    disk:
+      name: adaptive-learning-ai-data
+      mountPath: /opt/render/project/src/backend/data
+      sizeGB: 1
+    envVars:
+      - key: ALA_APP_NAME
+        value: AI Learning Assistant API
+      - key: ALA_APP_VERSION
+        value: 0.1.0
+      - key: ALA_ENVIRONMENT
+        value: production
+      - key: ALA_DEBUG
+        value: "false"
+      - key: ALA_HOST
+        value: 0.0.0.0
+      - key: ALA_LOG_LEVEL
+        value: INFO
+      - key: ALA_DATABASE_URL
+        value: sqlite+aiosqlite:////opt/render/project/src/backend/data/learning_assistant.db
+      - key: ALA_GEMINI_API_KEY
+        sync: false
+      - key: ALA_LLM_MODEL
+        value: gemini-2.5-flash
+      - key: ALA_EMBEDDING_MODEL
+        value: gemini-embedding-2
+      - key: ALA_EMBEDDING_DIMENSIONS
+        value: "768"
+      - key: ALA_AI_METRICS_PATH
+        value: /opt/render/project/src/backend/data/ai-metrics.jsonl
+      - key: ALA_AI_CACHE_PATH
+        value: /opt/render/project/src/backend/data/ai-cache.sqlite3
+      - key: ALA_CHROMA_PATH
+        value: /opt/render/project/src/backend/data/chroma
+      - key: ALA_PROMPT_ROOT
+        value: app/prompts/templates
+      - key: ALA_CORS_ALLOWED_ORIGINS
+        value: '["https://adaptive-learning-ai.vercel.app"]'
+      - key: ALA_TRUSTED_HOSTS
+        value: '["adaptive-learning-ai-api.onrender.com"]'
+      - key: ALA_ALLOW_ANONYMOUS_LEARNER
+        value: "false"
+      - key: ALA_MAX_REQUEST_BYTES
+        value: "1048576"
+      - key: ALA_RETRIEVAL_CANDIDATES
+        value: "20"
+      - key: ALA_RETRIEVAL_CONTEXT_CHUNKS
+        value: "8"
+      - key: ALA_RETRIEVAL_MIN_RELEVANCE
+        value: "0.25"
+      - key: ALA_QUALITY_THRESHOLD
+        value: "0.80"
+      - key: ALA_METRICS_ENABLED
+        value: "true"

@@ -1,0 +1,11 @@
+{
+  "prompt_id": "chat",
+  "active_version": "1.0.0",
+  "versions": {
+    "1.0.0": {
+      "template": "v1.jinja2",
+      "required_variables": ["conversation_context", "question", "retrieved_context"],
+      "response_schema": "ChatAnswer"
+    }
+  }
+}

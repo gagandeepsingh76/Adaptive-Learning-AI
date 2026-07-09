@@ -1,0 +1,11 @@
+{
+  "prompt_id": "evaluation",
+  "active_version": "1.0.0",
+  "versions": {
+    "1.0.0": {
+      "template": "v1.jinja2",
+      "required_variables": ["candidate", "deterministic_findings", "generation_type", "original_request", "rubric"],
+      "response_schema": "EvaluationOutput"
+    }
+  }
+}

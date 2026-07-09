@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-learning-assistant-backend"
+version = "0.1.0"
+description = "Production backend for a personalized AI learning assistant."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = { text = "MIT" }
+dependencies = [
+  "alembic>=1.16,<2",
+  "aiosqlite>=0.21,<1",
+  "chromadb>=1.0,<2",
+  "fastapi>=0.116,<1",
+  "google-genai>=1.30,<2",
+  "jinja2>=3.1,<4",
+  "prometheus-client>=0.22,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "sqlmodel>=0.0.24,<0.1",
+  "structlog>=25.4,<26",
+  "tenacity>=9.1,<10",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-config --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "S", "SIM", "RUF"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+exclude = ["alembic"]
+
+[[tool.mypy.overrides]]
+module = ["chromadb.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true
+source = ["app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+

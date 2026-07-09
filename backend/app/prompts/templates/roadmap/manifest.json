@@ -1,0 +1,11 @@
+{
+  "prompt_id": "roadmap",
+  "active_version": "1.0.0",
+  "versions": {
+    "1.0.0": {
+      "template": "v1.jinja2",
+      "required_variables": ["constraints", "goal", "learner_profile"],
+      "response_schema": "GeneratedRoadmap"
+    }
+  }
+}

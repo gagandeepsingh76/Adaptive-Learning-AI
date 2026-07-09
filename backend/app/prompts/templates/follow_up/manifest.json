@@ -1,0 +1,11 @@
+{
+  "prompt_id": "follow_up",
+  "active_version": "1.0.0",
+  "versions": {
+    "1.0.0": {
+      "template": "v1.jinja2",
+      "required_variables": ["answer", "question", "source_summaries"],
+      "response_schema": "FollowUpQuestions"
+    }
+  }
+}
