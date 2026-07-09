@@ -66,6 +66,20 @@ def test_openrouter_environment_aliases(monkeypatch: pytest.MonkeyPatch) -> None
     assert settings.llm_model == "openai/test-model"
 
 
+def test_chroma_collection_name_sanitizes_embedding_model_only() -> None:
+    settings = Settings(
+        _env_file=None,
+        embedding_model="OpenAI/Text Embedding:3 Small",
+        embedding_dimensions=768,
+    )
+
+    assert settings.embedding_model == "OpenAI/Text Embedding:3 Small"
+    assert (
+        settings.chroma_collection_name
+        == "learning_content--openai-text-embedding-3-small--d768--v1"
+    )
+
+
 async def test_generated_render_hostname_reaches_health_and_docs() -> None:
     app = create_app(
         production_settings(

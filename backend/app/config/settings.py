@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from enum import StrEnum
 from functools import lru_cache
@@ -21,6 +22,7 @@ PRODUCTION_CORS_ALLOWED_ORIGIN_DEFAULTS = (
 PRODUCTION_CORS_ALLOWED_ORIGIN_REGEX = (
     r"^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$"
 )
+CHROMA_COLLECTION_INVALID_CHARACTERS = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 def _hostname_from_origin(origin: str) -> str | None:
@@ -88,6 +90,12 @@ def _unique_origins(origins: Iterable[str | None]) -> list[str]:
         normalized_origins.append(origin)
         seen.add(origin)
     return normalized_origins
+
+
+def _sanitize_chroma_collection_fragment(value: str) -> str:
+    sanitized = CHROMA_COLLECTION_INVALID_CHARACTERS.sub("-", value.strip())
+    sanitized = re.sub(r"-{2,}", "-", sanitized).strip(".-_")
+    return sanitized or "model"
 
 
 class Environment(StrEnum):
@@ -236,7 +244,7 @@ class Settings(BaseSettings):
     @property
     def chroma_collection_name(self) -> str:
         """Return a model- and dimension-isolated Chroma collection name."""
-        model_slug = self.embedding_model.lower().replace("_", "-")
+        model_slug = _sanitize_chroma_collection_fragment(self.embedding_model.lower())
         return f"{self.chroma_collection_prefix}--{model_slug}--d{self.embedding_dimensions}--v1"
 
 
