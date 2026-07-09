@@ -45,6 +45,8 @@ async def test_gemini_provider_normalizes_usage_and_json_config(ai_settings: Any
     config = models.config
     assert config is not None
     assert config.response_mime_type == "application/json"
+    assert config.response_json_schema is None
+    assert "<response_schema>" in config.system_instruction
 
 
 async def test_gemini_provider_simplifies_large_response_schema(ai_settings: Any) -> None:
@@ -58,13 +60,14 @@ async def test_gemini_provider_simplifies_large_response_schema(ai_settings: Any
 
     config = models.config
     assert config is not None
-    schema = config.response_json_schema
-    assert isinstance(schema, dict)
-    assert schema["properties"]["skills"]["items"]["$ref"] == "#/$defs/GeneratedSkill"
-    encoded = json.dumps(schema)
+    assert config.response_json_schema is None
+    system_instruction = config.system_instruction
+    assert isinstance(system_instruction, str)
+    encoded = system_instruction
+    assert '"skills":{"items":{"$ref":"#/$defs/GeneratedSkill"},"type":"array"}' in encoded
     assert "GeneratedSubtask" in encoded
     assert not _schema_contains_any(
-        schema,
+        json.loads(encoded.split("<response_schema>", 1)[1].split("</response_schema>", 1)[0]),
         {
             "additionalProperties",
             "exclusiveMaximum",

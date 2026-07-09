@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from time import perf_counter
@@ -144,6 +145,7 @@ class GeminiProvider(LLMProvider):
 
     def _generation_config(self, request: GenerationRequest) -> types.GenerateContentConfig:
         threshold = types.HarmBlockThreshold(self._settings.safety_threshold)
+        response_schema = _gemini_response_json_schema(request.response_schema)
         categories = (
             types.HarmCategory.HARM_CATEGORY_HARASSMENT,
             types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
@@ -151,7 +153,9 @@ class GeminiProvider(LLMProvider):
             types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
         )
         return types.GenerateContentConfig(
-            system_instruction=request.system_instruction,
+            system_instruction=_system_instruction_with_schema(
+                request.system_instruction, response_schema
+            ),
             temperature=request.temperature
             if request.temperature is not None
             else self._settings.temperature,
@@ -161,7 +165,7 @@ class GeminiProvider(LLMProvider):
             if request.max_output_tokens is not None
             else self._settings.max_output_tokens,
             response_mime_type="application/json" if request.response_schema else "text/plain",
-            response_json_schema=_gemini_response_json_schema(request.response_schema),
+            response_json_schema=None,
             safety_settings=[
                 types.SafetySetting(category=category, threshold=threshold)
                 for category in categories
@@ -299,6 +303,23 @@ def _gemini_response_json_schema(schema: Mapping[str, Any] | None) -> dict[str, 
         return None
     simplified = _simplify_gemini_schema(schema)
     return simplified if isinstance(simplified, dict) else None
+
+
+def _system_instruction_with_schema(
+    system_instruction: str | None, schema: Mapping[str, Any] | None
+) -> str | None:
+    if schema is None:
+        return system_instruction
+    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
+    schema_instruction = (
+        "Return only one valid JSON object matching this response schema shape. "
+        "Do not include markdown fences, prose, or undeclared top-level fields. "
+        "The backend will enforce the full strict schema after generation.\n"
+        f"<response_schema>{schema_text}</response_schema>"
+    )
+    if system_instruction:
+        return f"{system_instruction}\n\n{schema_instruction}"
+    return schema_instruction
 
 
 def _simplify_gemini_schema(value: Any) -> Any:
