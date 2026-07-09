@@ -43,7 +43,7 @@ services:
       - key: ALA_PROMPT_ROOT
         value: app/prompts/templates
       - key: ALA_CORS_ALLOWED_ORIGINS
-        value: '["https://adaptive-learning-ai.vercel.app"]'
+        value: '["https://adaptive-learning-ai-psi.vercel.app"]'
       - key: ALA_TRUSTED_HOSTS
         value: '["*.onrender.com"]'
       - key: ALA_ALLOW_ANONYMOUS_LEARNER
