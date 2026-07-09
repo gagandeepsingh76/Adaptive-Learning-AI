@@ -1,8 +1,11 @@
 """OpenRouter embedding adapter tests without network access."""
 
 from types import SimpleNamespace
+from typing import Any
 
+from app.ai.cache import SQLiteAICache
 from app.ai.embeddings import OpenRouterEmbeddingProvider
+from app.config.ai_settings import AISettings
 from app.core.interfaces.ai import EmbeddingInput, EmbeddingPurpose, EmbeddingRequest
 
 
@@ -11,7 +14,7 @@ class FakeEmbeddingModels:
         self.calls = 0
         self.contents: list[str] = []
 
-    async def create(self, *, model, input, dimensions):
+    async def create(self, *, model: str, input: str, dimensions: int) -> Any:
         self.calls += 1
         self.contents.append(input)
         assert model == "openai/text-embedding-3-small"
@@ -19,7 +22,9 @@ class FakeEmbeddingModels:
         return SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 0.0, 0.0])])
 
 
-async def test_embedding_batch_preserves_metadata_and_uses_cache(ai_settings, ai_cache) -> None:
+async def test_embedding_batch_preserves_metadata_and_uses_cache(
+    ai_settings: AISettings, ai_cache: SQLiteAICache
+) -> None:
     embeddings = FakeEmbeddingModels()
     client = SimpleNamespace(embeddings=embeddings)
     provider = OpenRouterEmbeddingProvider("", ai_settings, ai_cache, client=client)

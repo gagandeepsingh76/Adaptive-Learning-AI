@@ -25,7 +25,7 @@ class ResponseValidator[OutputT: BaseModel]:
             decoded = json.loads(payload)
             if not isinstance(decoded, dict):
                 raise ValueError("top-level JSON must be an object")
-            candidate = self.schema.model_validate_json(payload)
+            candidate = self.schema.model_validate(decoded, strict=False)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             raise AIResponseValidationError(
                 "AI response failed JSON schema validation.",

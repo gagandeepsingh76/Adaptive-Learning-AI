@@ -13,7 +13,9 @@ from tests.fixtures.fakes import FakeLLMProvider, FakePromptRenderer, PassingEva
 from tests.unit.test_validation import valid_roadmap
 
 
-async def test_engine_repairs_invalid_json(ai_cache: SQLiteAICache) -> None:
+async def test_engine_retries_invalid_json_once_with_validation_errors(
+    ai_cache: SQLiteAICache,
+) -> None:
     provider = FakeLLMProvider(
         ["not-json", '{"questions":["What should I build?","How do I verify it?"]}']
     )
@@ -33,7 +35,12 @@ async def test_engine_repairs_invalid_json(ai_cache: SQLiteAICache) -> None:
 
     assert len(result.questions) == 2
     assert len(provider.requests) == 2
-    assert provider.requests[1].prompt_id == "repair"
+    assert provider.requests[0].response_schema == {"type": "object"}
+    assert "<json_output_contract>" in provider.requests[0].prompt
+    assert provider.requests[1].prompt_id == "follow_up"
+    assert provider.requests[1].prompt_version == "unversioned+repair.1"
+    assert "<generation_clarifications>" in provider.requests[1].prompt
+    assert "Expecting value" in provider.requests[1].prompt
 
 
 async def test_engine_regenerates_invalid_cached_roadmap(ai_cache: SQLiteAICache) -> None:
@@ -68,3 +75,6 @@ async def test_engine_regenerates_invalid_cached_roadmap(ai_cache: SQLiteAICache
 
     assert result.skills[0].tasks[0].difficulty == "beginner"
     assert len(provider.requests) == 1
+    assert provider.requests[0].response_schema == {"type": "object"}
+    assert "<json_output_contract>" in provider.requests[0].prompt
+    assert "$defs" not in provider.requests[0].prompt

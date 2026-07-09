@@ -1,7 +1,5 @@
 """OpenRouter generation adapter tests without network access."""
 
-import json
-from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,13 +14,20 @@ from app.schemas.ai_outputs import GeneratedRoadmap
 
 
 class FakeChatCompletions:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        expected_model: str = "openai/gpt-4.1-mini",
+        expected_prompt: str = "prompt",
+    ) -> None:
         self.params: dict[str, Any] | None = None
+        self.expected_model = expected_model
+        self.expected_prompt = expected_prompt
 
     async def create(self, **params: Any) -> Any:
         self.params = params
-        assert params["model"] == "openai/gpt-4.1-mini"
-        assert params["messages"][-1] == {"role": "user", "content": "prompt"}
+        assert params["model"] == self.expected_model
+        assert params["messages"][-1] == {"role": "user", "content": self.expected_prompt}
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
@@ -50,25 +55,24 @@ async def test_openrouter_provider_normalizes_usage_and_json_config(
     params = completions.params
     assert params is not None
     assert params["extra_body"] == {"provider": {"require_parameters": True}}
-    assert params["response_format"] == {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "structured_response",
-            "strict": True,
-            "schema": {"type": "object"},
-        },
-    }
-    assert "<response_schema>" in params["messages"][0]["content"]
+    assert params["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in params["response_format"]
+    system_instruction = params["messages"][0]["content"]
+    assert "<response_schema>" not in system_instruction
+    assert "validate the JSON locally" in system_instruction
 
 
-async def test_openrouter_provider_sends_full_response_schema(ai_settings: Any) -> None:
-    completions = FakeChatCompletions()
+async def test_openrouter_provider_does_not_send_json_schema_for_gemini_roadmap(
+    ai_settings: Any,
+) -> None:
+    completions = FakeChatCompletions(expected_model="google/gemini-2.5-flash")
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     provider = OpenRouterProvider("", ai_settings, client=client)
 
     await provider.generate(
         GenerationRequest(
             prompt="prompt",
+            model="google/gemini-2.5-flash",
             prompt_id="roadmap/v1",
             response_schema=GeneratedRoadmap.model_json_schema(),
         )
@@ -76,32 +80,14 @@ async def test_openrouter_provider_sends_full_response_schema(ai_settings: Any) 
 
     params = completions.params
     assert params is not None
-    assert params["response_format"]["type"] == "json_schema"
-    assert params["response_format"]["json_schema"]["name"] == "roadmap_v1"
-    assert params["response_format"]["json_schema"]["strict"] is True
-    assert params["response_format"]["json_schema"]["schema"] == (
-        GeneratedRoadmap.model_json_schema()
-    )
+    assert params["response_format"] == {"type": "json_object"}
+    assert "json_schema" not in params["response_format"]
+    assert "schema" not in params["response_format"]
     system_instruction = params["messages"][0]["content"]
     assert isinstance(system_instruction, str)
-    encoded = system_instruction
-    assert '"skills":{"items":{"$ref":"#/$defs/GeneratedSkill"},"maxItems":30' in encoded
-    assert "GeneratedSubtask" in encoded
-    assert _schema_contains_any(
-        json.loads(encoded.split("<response_schema>", 1)[1].split("</response_schema>", 1)[0]),
-        {
-            "additionalProperties",
-            "exclusiveMaximum",
-            "exclusiveMinimum",
-            "maxItems",
-            "maxLength",
-            "maximum",
-            "minItems",
-            "minLength",
-            "minimum",
-            "title",
-        },
-    )
+    assert "<response_schema>" not in system_instruction
+    assert "$defs" not in system_instruction
+    assert "GeneratedSubtask" not in system_instruction
 
 
 class FailingChatCompletions:
@@ -173,11 +159,3 @@ def test_openrouter_provider_configures_openai_compatible_client(ai_settings: An
     assert provider._transport_diagnostics["api_key_configured"] is True
     assert provider._transport_diagnostics["base_url"] == OPENROUTER_BASE_URL
     assert str(provider._client.base_url).rstrip("/") == OPENROUTER_BASE_URL
-
-
-def _schema_contains_any(value: Any, keys: set[str]) -> bool:
-    if isinstance(value, Mapping):
-        return any(key in keys or _schema_contains_any(item, keys) for key, item in value.items())
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return any(_schema_contains_any(item, keys) for item in value)
-    return False

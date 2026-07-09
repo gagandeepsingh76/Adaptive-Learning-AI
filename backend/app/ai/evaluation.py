@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from app.ai.json_contract import append_json_output_contract, json_object_response_schema
 from app.core.interfaces.ai import (
     EvaluationResult,
     GenerationRequest,
@@ -146,8 +147,8 @@ class GenerationEvaluator(QualityEvaluator):
         )
         response = await self._provider.generate(
             GenerationRequest(
-                prompt=rendered.text,
-                response_schema=EvaluationOutput.model_json_schema(),
+                prompt=append_json_output_contract(rendered.text, EvaluationOutput),
+                response_schema=json_object_response_schema(),
                 prompt_id=rendered.prompt_id,
                 prompt_version=rendered.version,
                 temperature=0.0,

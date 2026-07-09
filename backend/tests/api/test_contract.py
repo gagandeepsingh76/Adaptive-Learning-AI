@@ -1,7 +1,6 @@
 """HTTP and OpenAPI contract tests."""
 
 from decimal import Decimal
-from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -109,7 +108,7 @@ async def test_roadmap_endpoint_returns_generated_response() -> None:
         )
     )
     app.dependency_overrides[get_services] = lambda: ServiceContainer(
-        roadmaps=_SuccessfulRoadmapService(),
+        roadmaps=_SuccessfulRoadmapService(),  # type: ignore[arg-type]
         projects=None,
         chat=None,
         progress=None,  # type: ignore[arg-type]

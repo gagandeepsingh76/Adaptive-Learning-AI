@@ -1,8 +1,8 @@
-Repair the invalid JSON so it conforms exactly to the target schema and original instructions.
+Repair the invalid JSON so it conforms exactly to the target format and original instructions.
 Do not add prose, markdown fences, or undeclared fields. Preserve valid content where possible.
 
 <original_instructions>{{ original_instructions | tojson }}</original_instructions>
-<target_schema>{{ schema | tojson }}</target_schema>
+<target_format>{{ format | tojson }}</target_format>
 <invalid_payload>{{ invalid_payload | tojson }}</invalid_payload>
 <validation_errors>{{ validation_errors | tojson }}</validation_errors>
 

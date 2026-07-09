@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from time import perf_counter
@@ -33,7 +32,6 @@ from app.utils.time import utc_now
 logger = get_logger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_OPENROUTER_SCHEMA_NAME = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 class OpenRouterProvider(LLMProvider):
@@ -136,7 +134,7 @@ class OpenRouterProvider(LLMProvider):
             else self._settings.max_output_tokens,
         }
         if request.response_schema:
-            params["response_format"] = _response_format(request)
+            params["response_format"] = {"type": "json_object"}
             params["extra_body"] = {"provider": {"require_parameters": True}}
         return params
 
@@ -265,8 +263,8 @@ class OpenRouterProvider(LLMProvider):
 
 
 def _messages(request: GenerationRequest) -> list[dict[str, str]]:
-    system_instruction = _system_instruction_with_schema(
-        request.system_instruction, request.response_schema
+    system_instruction = _system_instruction_for_json_output(
+        request.system_instruction, bool(request.response_schema)
     )
     messages: list[dict[str, str]] = []
     if system_instruction:
@@ -275,44 +273,19 @@ def _messages(request: GenerationRequest) -> list[dict[str, str]]:
     return messages
 
 
-def _system_instruction_with_schema(
-    system_instruction: str | None, schema: Mapping[str, Any] | None
+def _system_instruction_for_json_output(
+    system_instruction: str | None, expects_json: bool
 ) -> str | None:
-    if schema is None:
+    if not expects_json:
         return system_instruction
-    schema_text = json.dumps(schema, separators=(",", ":"), sort_keys=True)
-    schema_instruction = (
-        "Return only one valid JSON object matching this response schema. "
-        "Do not include markdown fences, prose, or undeclared top-level fields. "
-        "The backend will enforce the full strict schema after generation.\n"
-        f"<response_schema>{schema_text}</response_schema>"
+    json_instruction = (
+        "Return only one valid JSON object matching the format described in the user prompt. "
+        "Do not include markdown fences, prose, comments, or text outside the JSON object. "
+        "The backend will parse and validate the JSON locally."
     )
     if system_instruction:
-        return f"{system_instruction}\n\n{schema_instruction}"
-    return schema_instruction
-
-
-def _response_format(request: GenerationRequest) -> dict[str, Any]:
-    schema = request.response_schema
-    if schema is None:
-        return {"type": "json_object"}
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": _schema_name(request),
-            "strict": True,
-            "schema": _json_safe(schema),
-        },
-    }
-
-
-def _schema_name(request: GenerationRequest) -> str:
-    title = None
-    if isinstance(request.response_schema, Mapping):
-        title = request.response_schema.get("title")
-    candidate = str(request.prompt_id or title or "structured_response")
-    normalized = _OPENROUTER_SCHEMA_NAME.sub("_", candidate).strip("_")
-    return (normalized or "structured_response")[:64]
+        return f"{system_instruction}\n\n{json_instruction}"
+    return json_instruction
 
 
 def _content_to_text(content: Any) -> str:

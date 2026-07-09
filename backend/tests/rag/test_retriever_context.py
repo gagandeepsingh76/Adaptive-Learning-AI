@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 
+from app.ai.cache import SQLiteAICache
 from app.core.interfaces.vector_store import Metadata, VectorMatch, VectorRecord, VectorStore
 from app.rag.context import ContextBuilder
 from app.rag.retriever import RetrievalRequest, Retriever
@@ -18,7 +19,9 @@ class RecordingVectorStore(VectorStore):
     async def upsert(self, records: Sequence[VectorRecord]) -> None:
         del records
 
-    async def search(self, embedding, filters, limit):
+    async def search(
+        self, embedding: Sequence[float], filters: Metadata, limit: int
+    ) -> tuple[VectorMatch, ...]:
         del embedding, limit
         self.filters.append(filters)
         return (
@@ -41,7 +44,9 @@ class RecordingVectorStore(VectorStore):
         return None
 
 
-async def test_retriever_scopes_search_and_context_preserves_citation(ai_cache) -> None:
+async def test_retriever_scopes_search_and_context_preserves_citation(
+    ai_cache: SQLiteAICache,
+) -> None:
     vector_store = RecordingVectorStore()
     retriever = Retriever(FakeEmbeddingProvider(), vector_store, ai_cache)
 

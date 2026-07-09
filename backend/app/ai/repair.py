@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 
 from pydantic import BaseModel
 
+from app.ai.json_contract import json_object_response_schema, json_output_contract
 from app.core.interfaces.ai import GenerationRequest, GenerationResult, LLMProvider, PromptRenderer
 from app.utils.hashing import fingerprint
 
@@ -39,7 +40,7 @@ class PromptRepairEngine:
             {
                 "invalid_payload": invalid_payload,
                 "original_instructions": original_request.prompt,
-                "schema": target_schema.model_json_schema(),
+                "format": json_output_contract(target_schema),
                 "validation_errors": validation_errors,
             },
         )
@@ -47,7 +48,7 @@ class PromptRepairEngine:
             GenerationRequest(
                 prompt=rendered.text,
                 system_instruction="Return only corrected JSON.",
-                response_schema=target_schema.model_json_schema(),
+                response_schema=json_object_response_schema(),
                 model=original_request.model,
                 temperature=0.0,
                 top_p=original_request.top_p,
@@ -91,4 +92,3 @@ class PromptRepairEngine:
                 {"prompt": prompt, "base_version": base_version, "attempt": attempt}
             ),
         )
-

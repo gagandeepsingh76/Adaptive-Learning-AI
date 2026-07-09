@@ -1,14 +1,14 @@
-"""Typed structured generation with repair, retry, evaluation, and caching."""
+"""Typed structured generation with retry, evaluation, and caching."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import replace
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+from app.ai.json_contract import with_json_output_contract
 from app.ai.repair import PromptRepairEngine
 from app.ai.validation import ResponseValidator
 from app.core.interfaces.ai import GenerationRequest, LLMProvider, QualityEvaluator
@@ -52,8 +52,9 @@ class StructuredGenerationEngine:
         quality_context: Mapping[str, Any] | None = None,
         validate_quality: bool = True,
     ) -> OutputT:
-        """Generate, structurally validate, repair, evaluate, and cache one object."""
-        request = replace(request, response_schema=schema.model_json_schema())
+        """Generate, structurally validate, retry once if needed, evaluate, and cache."""
+        schema_signature = schema.model_json_schema()
+        provider_request = with_json_output_contract(request, schema)
         validator = ResponseValidator(schema)
         cache_key = fingerprint(
             {
@@ -61,7 +62,7 @@ class StructuredGenerationEngine:
                 "prompt_id": request.prompt_id,
                 "prompt_version": request.prompt_version,
                 "model": request.model,
-                "schema": schema.model_json_schema(),
+                "schema": schema_signature,
             }
         )
         cached = await self._cache.get("structured_generation", cache_key)
@@ -79,36 +80,32 @@ class StructuredGenerationEngine:
 
         repair_attempts = 0
         validation_issues: list[str] = []
-        response = await self._provider.generate(request)
+        response = await self._provider.generate(provider_request)
         try:
             candidate = validator.validate_json(response.text)
         except AIResponseValidationError as exc:
             repair_attempts = 1
             validation_issues = _issues(exc)
+            improved = self._repair.improve_prompt(provider_request, validation_issues, 1)
+            retried = await self._provider.generate(improved.request)
             try:
-                repaired = await self._repair.repair_json(
-                    response.text, validation_issues, schema, request
-                )
-                candidate = validator.validate_json(repaired.text)
-            except AIResponseValidationError as repair_exc:
-                validation_issues = _issues(repair_exc)
-                improved = self._repair.improve_prompt(request, validation_issues, 2)
-                retried = await self._provider.generate(improved.request)
-                try:
-                    candidate = validator.validate_json(retried.text)
-                except AIResponseValidationError as final_exc:
-                    raise LLMStructuredOutputError(
-                        "AI response remained invalid after repair and regeneration.",
-                        details={"errors": _issues(final_exc)},
-                    ) from final_exc
+                candidate = validator.validate_json(retried.text)
+            except AIResponseValidationError as final_exc:
+                raise LLMStructuredOutputError(
+                    "AI response remained invalid after one clarified regeneration.",
+                    details={"errors": _issues(final_exc)},
+                ) from final_exc
 
         evaluation_score: float | None = None
         if validate_quality:
             evaluation = await self._evaluator.evaluate(candidate, quality_context)
             evaluation_score = evaluation.overall_score
             if not evaluation.passed:
+                evaluation_issues = list(evaluation.recommendations) or list(evaluation.reasons)
                 improved = self._repair.improve_prompt(
-                    request, list(evaluation.recommendations) or list(evaluation.reasons), 3
+                    provider_request,
+                    evaluation_issues,
+                    2,
                 )
                 regenerated = await self._provider.generate(improved.request)
                 try:
