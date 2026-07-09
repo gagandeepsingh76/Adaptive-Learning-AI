@@ -1,16 +1,21 @@
 """Gemini generation adapter tests without network access."""
 
 from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from google.genai.errors import ClientError
 
 from app.ai.gemini import GeminiProvider
 from app.core.interfaces.ai import GenerationRequest
+from app.exceptions import LLMProviderClientError
 
 
 class FakeModels:
     def __init__(self) -> None:
-        self.config = None
+        self.config: Any = None
 
-    async def generate_content(self, *, model, contents, config):
+    async def generate_content(self, *, model: str, contents: str, config: Any) -> Any:
         self.config = config
         assert model == "gemini-2.5-flash"
         assert contents == "prompt"
@@ -23,7 +28,7 @@ class FakeModels:
         )
 
 
-async def test_gemini_provider_normalizes_usage_and_json_config(ai_settings) -> None:
+async def test_gemini_provider_normalizes_usage_and_json_config(ai_settings: Any) -> None:
     models = FakeModels()
     client = SimpleNamespace(aio=SimpleNamespace(models=models))
     provider = GeminiProvider("", ai_settings, client=client)
@@ -34,5 +39,80 @@ async def test_gemini_provider_normalizes_usage_and_json_config(ai_settings) -> 
 
     assert result.text == '{"ok":true}'
     assert result.usage.total_tokens == 10
-    assert models.config.response_mime_type == "application/json"
+    config = models.config
+    assert config is not None
+    assert config.response_mime_type == "application/json"
 
+
+class FailingModels:
+    async def generate_content(self, *, model: str, contents: str, config: Any) -> Any:
+        assert model == "gemini-2.5-flash"
+        assert contents == "prompt"
+        body = {
+            "error": {
+                "code": 403,
+                "message": "API key not valid for this Gemini model.",
+                "status": "PERMISSION_DENIED",
+            }
+        }
+        raise ClientError(
+            403,
+            body,
+            response=SimpleNamespace(
+                text=(
+                    '{"error":{"code":403,"message":"API key not valid for this '
+                    'Gemini model.","status":"PERMISSION_DENIED"}}'
+                )
+            ),
+        )
+
+
+async def test_gemini_provider_exposes_complete_client_error(
+    ai_settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def capture_warning(event: str, **kwargs: Any) -> None:
+        events.append((event, kwargs))
+
+    monkeypatch.setattr("app.ai.gemini.logger.warning", capture_warning)
+    client = SimpleNamespace(aio=SimpleNamespace(models=FailingModels()))
+    provider = GeminiProvider("", ai_settings, client=client)
+
+    with pytest.raises(LLMProviderClientError) as raised:
+        await provider.generate(GenerationRequest(prompt="prompt"))
+
+    error = raised.value
+    assert error.status_code == 403
+    assert error.code == "GEMINI_PERMISSION_DENIED"
+    assert error.retryable is False
+    assert error.message == "Gemini request rejected: API key not valid for this Gemini model."
+    details = error.details
+    assert details is not None
+    assert details["http_status"] == 403
+    assert details["gemini_error_code"] == "PERMISSION_DENIED"
+    assert details["gemini_error_message"] == "API key not valid for this Gemini model."
+    assert details["response_body"] == (
+        '{"error":{"code":403,"message":"API key not valid for this Gemini '
+        'model.","status":"PERMISSION_DENIED"}}'
+    )
+    assert details["response_json"]["error"]["status"] == "PERMISSION_DENIED"
+    assert details["api_key_sent"] is False
+
+    assert events
+    event, fields = events[0]
+    assert event == "ai.generation.failed"
+    assert fields["http_status"] == 403
+    assert fields["gemini_error_code"] == "PERMISSION_DENIED"
+    assert fields["gemini_error_message"] == "API key not valid for this Gemini model."
+    assert fields["response_body"] == details["response_body"]
+    assert fields["gemini_client_error"]["response_json"] == details["response_json"]
+
+
+def test_gemini_provider_configures_sdk_api_key_header(ai_settings: Any) -> None:
+    provider = GeminiProvider("test-gemini-key", ai_settings)
+
+    assert provider._transport_diagnostics["api_key_configured"] is True
+    assert provider._transport_diagnostics["api_key_client_present"] is True
+    assert provider._transport_diagnostics["api_key_header_present"] is True
+    assert provider._transport_diagnostics["api_key_sent"] is True

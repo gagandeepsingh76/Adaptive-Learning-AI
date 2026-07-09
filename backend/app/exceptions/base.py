@@ -72,6 +72,29 @@ class LLMProviderError(InfrastructureError):
     code = "AI_PROVIDER_UNAVAILABLE"
 
 
+class LLMProviderClientError(LLMProviderError):
+    """LLM provider rejected a request with a client-actionable error."""
+
+    code = "AI_PROVIDER_REQUEST_FAILED"
+    retryable = False
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, Any] | None = None,
+        status_code: int = 502,
+        app_code: str | None = None,
+        retryable: bool | None = None,
+    ) -> None:
+        super().__init__(message, details=details)
+        self.status_code = status_code
+        if app_code is not None:
+            self.code = app_code
+        if retryable is not None:
+            self.retryable = retryable
+
+
 class LLMProviderConfigurationError(LLMProviderError):
     """LLM provider cannot be used until required configuration is supplied."""
 
