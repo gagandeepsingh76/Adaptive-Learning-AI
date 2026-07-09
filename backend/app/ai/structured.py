@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, TypeVar
@@ -65,12 +66,16 @@ class StructuredGenerationEngine:
         )
         cached = await self._cache.get("structured_generation", cache_key)
         if isinstance(cached, dict):
-            candidate = validator.validate_json(schema.model_validate(cached).model_dump_json())
-            if not validate_quality:
-                return candidate
-            cached_evaluation = await self._evaluator.evaluate(candidate, quality_context)
-            if cached_evaluation.passed:
-                return candidate
+            try:
+                candidate = validator.validate_json(json.dumps(cached))
+            except AIResponseValidationError:
+                candidate = None
+            if candidate is not None:
+                if not validate_quality:
+                    return candidate
+                cached_evaluation = await self._evaluator.evaluate(candidate, quality_context)
+                if cached_evaluation.passed:
+                    return candidate
 
         repair_attempts = 0
         validation_issues: list[str] = []

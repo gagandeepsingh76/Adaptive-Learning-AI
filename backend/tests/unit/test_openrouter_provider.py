@@ -49,7 +49,15 @@ async def test_openrouter_provider_normalizes_usage_and_json_config(
     assert result.usage.total_tokens == 10
     params = completions.params
     assert params is not None
-    assert params["response_format"] == {"type": "json_object"}
+    assert params["extra_body"] == {"provider": {"require_parameters": True}}
+    assert params["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "structured_response",
+            "strict": True,
+            "schema": {"type": "object"},
+        },
+    }
     assert "<response_schema>" in params["messages"][0]["content"]
 
 
@@ -59,11 +67,21 @@ async def test_openrouter_provider_sends_full_response_schema(ai_settings: Any) 
     provider = OpenRouterProvider("", ai_settings, client=client)
 
     await provider.generate(
-        GenerationRequest(prompt="prompt", response_schema=GeneratedRoadmap.model_json_schema())
+        GenerationRequest(
+            prompt="prompt",
+            prompt_id="roadmap/v1",
+            response_schema=GeneratedRoadmap.model_json_schema(),
+        )
     )
 
     params = completions.params
     assert params is not None
+    assert params["response_format"]["type"] == "json_schema"
+    assert params["response_format"]["json_schema"]["name"] == "roadmap_v1"
+    assert params["response_format"]["json_schema"]["strict"] is True
+    assert params["response_format"]["json_schema"]["schema"] == (
+        GeneratedRoadmap.model_json_schema()
+    )
     system_instruction = params["messages"][0]["content"]
     assert isinstance(system_instruction, str)
     encoded = system_instruction

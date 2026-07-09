@@ -1,10 +1,21 @@
 """HTTP and OpenAPI contract tests."""
 
+from decimal import Decimal
+from typing import Any
+from uuid import UUID, uuid4
+
 import httpx
 
-from app.api.dependencies import get_services
+from app.api.dependencies import ServiceContainer, get_services
 from app.config.settings import Environment, Settings
 from app.main import create_app
+from app.schemas.roadmap import (
+    RoadmapCreateRequest,
+    RoadmapResponse,
+    SkillResponse,
+    SubtaskResponse,
+    TaskResponse,
+)
 
 
 def test_openapi_contains_all_assignment_routes() -> None:
@@ -88,6 +99,47 @@ async def test_health_and_unconfigured_provider_error_are_safe() -> None:
     assert "traceback" not in unavailable.text.casefold()
 
 
+async def test_roadmap_endpoint_returns_generated_response() -> None:
+    app = create_app(
+        Settings(
+            _env_file=None,
+            environment=Environment.TEST,
+            database_url="sqlite+aiosqlite:///:memory:",
+            trusted_hosts=["testserver"],
+        )
+    )
+    app.dependency_overrides[get_services] = lambda: ServiceContainer(
+        roadmaps=_SuccessfulRoadmapService(),
+        projects=None,
+        chat=None,
+        progress=None,  # type: ignore[arg-type]
+        resources=None,  # type: ignore[arg-type]
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=transport, base_url="http://testserver") as client,
+    ):
+        response = await client.post(
+            "/roadmap",
+            json={
+                "goal_title": "Backend Engineer",
+                "goal_description": "Build production APIs.",
+                "experience_level": "intermediate",
+                "learning_style": "hands_on",
+                "weekly_hours": 8,
+                "existing_skills": ["Python"],
+                "constraints": ["portfolio-ready"],
+            },
+        )
+
+    body = response.json()
+    assert response.status_code == 201
+    assert body["goal_title"] == "Backend Engineer"
+    assert body["skills"][0]["tasks"][0]["difficulty"] == "beginner"
+    assert body["skills"][0]["tasks"][0]["subtasks"][0]["completion_criteria"]
+
+
 async def test_project_request_enforces_exclusive_modes() -> None:
     app = create_app(
         Settings(
@@ -107,3 +159,46 @@ async def test_project_request_enforces_exclusive_modes() -> None:
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "REQUEST_VALIDATION_ERROR"
+
+
+class _SuccessfulRoadmapService:
+    async def create(
+        self, learner_id: UUID, command: RoadmapCreateRequest, request_id: str | None = None
+    ) -> RoadmapResponse:
+        del learner_id, request_id
+        return RoadmapResponse(
+            roadmap_id=uuid4(),
+            goal_title=command.goal_title,
+            estimated_hours=Decimal("10.0"),
+            skills=[
+                SkillResponse(
+                    id=uuid4(),
+                    title="Python APIs",
+                    description="Build robust typed web APIs with validation and tests.",
+                    target_proficiency="intermediate",
+                    estimated_hours=Decimal("10.0"),
+                    order_index=0,
+                    tasks=[
+                        TaskResponse(
+                            id=uuid4(),
+                            title="FastAPI service",
+                            description="Implement a layered HTTP service with strict contracts.",
+                            difficulty="beginner",
+                            estimated_hours=Decimal("10.0"),
+                            order_index=0,
+                            learning_outcomes=["Design typed API boundaries"],
+                            subtasks=[
+                                SubtaskResponse(
+                                    id=uuid4(),
+                                    title="Create routes",
+                                    description="Create and test typed route handlers.",
+                                    completion_criteria="Contract tests pass.",
+                                    estimated_hours=Decimal("10.0"),
+                                    order_index=0,
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )

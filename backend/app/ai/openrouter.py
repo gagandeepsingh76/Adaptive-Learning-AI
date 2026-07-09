@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncIterator, Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from time import perf_counter
@@ -32,6 +33,7 @@ from app.utils.time import utc_now
 logger = get_logger(__name__)
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_OPENROUTER_SCHEMA_NAME = re.compile(r"[^a-zA-Z0-9_-]+")
 
 
 class OpenRouterProvider(LLMProvider):
@@ -134,7 +136,8 @@ class OpenRouterProvider(LLMProvider):
             else self._settings.max_output_tokens,
         }
         if request.response_schema:
-            params["response_format"] = {"type": "json_object"}
+            params["response_format"] = _response_format(request)
+            params["extra_body"] = {"provider": {"require_parameters": True}}
         return params
 
     def _to_result(
@@ -287,6 +290,29 @@ def _system_instruction_with_schema(
     if system_instruction:
         return f"{system_instruction}\n\n{schema_instruction}"
     return schema_instruction
+
+
+def _response_format(request: GenerationRequest) -> dict[str, Any]:
+    schema = request.response_schema
+    if schema is None:
+        return {"type": "json_object"}
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": _schema_name(request),
+            "strict": True,
+            "schema": _json_safe(schema),
+        },
+    }
+
+
+def _schema_name(request: GenerationRequest) -> str:
+    title = None
+    if isinstance(request.response_schema, Mapping):
+        title = request.response_schema.get("title")
+    candidate = str(request.prompt_id or title or "structured_response")
+    normalized = _OPENROUTER_SCHEMA_NAME.sub("_", candidate).strip("_")
+    return (normalized or "structured_response")[:64]
 
 
 def _content_to_text(content: Any) -> str:

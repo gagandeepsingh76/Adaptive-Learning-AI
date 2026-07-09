@@ -9,5 +9,11 @@ Build skills in prerequisite order. Every skill must contain ordered tasks, and 
 contain concrete ordered subtasks with measurable completion criteria. Estimates must be realistic:
 subtask totals should match their task, task totals should match their skill, and skill totals should
 match the roadmap within a small rounding tolerance. Avoid duplicate or cosmetically renamed items.
-Return only the JSON object required by the supplied response schema.
 
+Return exactly one JSON object matching the supplied response schema:
+- Do not wrap the object in a "roadmap" or "data" key.
+- Do not include markdown fences, prose, comments, or undeclared fields.
+- Use the exact field names from the schema.
+- Use JSON numbers for estimated_hours values, without units or text.
+- Use only these difficulty values: "beginner", "intermediate", or "advanced".
+- Use zero-based contiguous order_index values for every skill, task, and subtask list.
